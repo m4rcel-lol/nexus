@@ -1,0 +1,258 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ChannelType {
+  TEXT
+  VOICE
+  VIDEO
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum MessageTargetType {
+  CHANNEL
+  CONVERSATION
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  username       String   @unique
+  displayName    String
+  passwordHash   String
+  avatarUrl      String?
+  avatarAnimated Boolean  @default(true)
+  bannerUrl      String?
+  locale         String   @default("en")
+  isAdmin        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  ownedServers        Server[]                  @relation("ServerOwner")
+  memberships         ServerMember[]
+  messages            Message[]
+  conversationMembers ConversationParticipant[]
+  uploadedFiles       FileObject[]
+  themes              UserTheme[]
+}
+
+model Server {
+  id                  String   @id @default(cuid())
+  name                String
+  description         String?
+  ownerId             String
+  iconUrl             String?
+  bannerUrl           String?
+  inviteBackgroundUrl String?
+  vanitySlug          String?  @unique
+  audioBitrate        Int      @default(384000)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  owner      User           @relation("ServerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  categories Category[]
+  channels   Channel[]
+  roles      Role[]
+  members    ServerMember[]
+  invites    Invite[]
+  emojis     CustomEmoji[]
+
+  @@index([ownerId])
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  serverId  String
+  name      String
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  server   Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  channels Channel[]
+
+  @@unique([serverId, name])
+  @@index([serverId, position])
+}
+
+model Channel {
+  id          String      @id @default(cuid())
+  serverId    String
+  categoryId  String?
+  type        ChannelType
+  name        String
+  topic       String?
+  position    Int         @default(0)
+  isPrivate   Boolean     @default(false)
+  livekitRoom String?     @unique
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  server   Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  messages Message[]
+
+  @@unique([serverId, name])
+  @@index([serverId, type])
+  @@index([categoryId, position])
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  serverId    String
+  name        String
+  color       String?
+  permissions BigInt   @default(0)
+  position    Int      @default(0)
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  server  Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  members MemberRole[]
+
+  @@unique([serverId, name])
+  @@index([serverId, position])
+}
+
+model ServerMember {
+  id        String   @id @default(cuid())
+  serverId  String
+  userId    String
+  nickname  String?
+  joinedAt  DateTime @default(now())
+  mutedUntil DateTime?
+  bannedAt  DateTime?
+
+  server Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roles  MemberRole[]
+
+  @@unique([serverId, userId])
+  @@index([userId])
+}
+
+model MemberRole {
+  memberId String
+  roleId   String
+
+  member ServerMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  role   Role         @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([memberId, roleId])
+}
+
+model Conversation {
+  id          String           @id @default(cuid())
+  type        ConversationType @default(DIRECT)
+  title       String?
+  e2eeEnabled Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  participants ConversationParticipant[]
+  messages     Message[]
+}
+
+model ConversationParticipant {
+  conversationId String
+  userId         String
+  publicKey      String?
+  joinedAt       DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id                 String            @id @default(cuid())
+  targetType         MessageTargetType
+  channelId          String?
+  conversationId     String?
+  authorId           String
+  content            String
+  translatedContent  Json?
+  isEncrypted        Boolean           @default(false)
+  encryptionMetadata Json?
+  editedAt           DateTime?
+  deletedAt          DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  channel      Channel?      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  author       User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  attachments  FileObject[]
+
+  @@index([channelId, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([authorId, createdAt])
+}
+
+model FileObject {
+  id          String   @id @default(cuid())
+  uploaderId  String
+  messageId   String?
+  bucket      String
+  objectKey   String   @unique
+  fileName    String
+  contentType String
+  sizeBytes   Int
+  createdAt   DateTime @default(now())
+
+  uploader User     @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  message  Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([uploaderId, createdAt])
+}
+
+model Invite {
+  id        String    @id @default(cuid())
+  serverId  String
+  code      String    @unique
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  server Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+}
+
+model CustomEmoji {
+  id        String   @id @default(cuid())
+  serverId  String?
+  name      String
+  imageUrl  String
+  animated  Boolean  @default(true)
+  global    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  server Server? @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([global])
+  @@index([serverId])
+}
+
+model UserTheme {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  css       String
+  enabled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, enabled])
+}
